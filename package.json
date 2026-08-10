@@ -19,14 +19,11 @@
     "url": "https://github.com/ibloxing-ui/KOMORABI/issues"
   },
   "homepage": "https://github.com/ibloxing-ui/KOMORABI#readme",
-  "dependencies": {
+"dependencies": {
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
-<<<<<<< HEAD
     "mysql2": "^3.12.0",
-=======
->>>>>>> d1eceed (Agregar socket.io a dependencias)
     "pg": "^8.23.0",
     "socket.io": "^4.8.3"
   }
