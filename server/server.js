@@ -4,7 +4,7 @@ const cors = require('cors');
 const path = require('path');
 const { Server } = require('socket.io');
 
-// Intentar cargar módulos opcionales si existen
+// Carga opcional de módulos de soporte
 let iniciarConsolaDev, detectarContenidoNSFW, db;
 try {
     iniciarConsolaDev = require('./devConsole').iniciarConsolaDev;
@@ -12,7 +12,7 @@ try {
     db = require('./dbConnection');
     if (iniciarConsolaDev && db) iniciarConsolaDev(db);
 } catch (e) {
-    console.log("Nota: Módulos de DB/NSFW no cargados o en modo liviano.");
+    console.log("Nota: Módulos de DB/NSFW en modo liviano o no encontrados.");
 }
 
 const app = express();
@@ -21,7 +21,7 @@ app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 
-// Servir la carpeta estática (Ajusta la ruta según dónde esté tu carpeta 'public')
+// Servir la carpeta de archivos estáticos
 const PUBLIC_DIR = path.join(process.cwd(), 'public');
 app.use(express.static(PUBLIC_DIR));
 
@@ -37,14 +37,12 @@ const io = new Server(server, {
 app.post('/api/login', async (req, res) => {
     try {
         const { username, password } = req.body;
-        // Validación simulada / DB
         res.json({ status: 'ok', mensaje: 'Sesión iniciada' });
     } catch (error) {
         res.status(500).json({ error: error.message });
     }
 });
 
-// Fallback para servir el index.html en cualquier otra ruta
 app.get('*', (req, res) => {
     res.sendFile(path.join(PUBLIC_DIR, 'index.html'));
 });
@@ -102,10 +100,5 @@ io.on('connection', (socket) => {
     });
 });
 
-// Usar la variable de entorno PORT obligatoria para Render
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => console.log(`Servidor Komorebi corriendo en puerto ${PORT}`));
-    });
-});
-
-server.listen(3000, () => console.log('Servidor Komorebi corriendo en http://localhost:3000'));
