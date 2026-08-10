@@ -1,16 +1,29 @@
 const express = require('express');
 const http = require('http');
-const cors = require('cors'); // <--- 1. Importar cors
+const cors = require('cors');
+const path = require('path');
 const { Server } = require('socket.io');
-const { iniciarConsolaDev } = require('./devConsole');
-const { detectarContenidoNSFW } = require('./nsfwFilter');
+
+// Intentar cargar módulos opcionales si existen
+let iniciarConsolaDev, detectarContenidoNSFW, db;
+try {
+    iniciarConsolaDev = require('./devConsole').iniciarConsolaDev;
+    detectarContenidoNSFW = require('./nsfwFilter').detectarContenidoNSFW;
+    db = require('./dbConnection');
+    if (iniciarConsolaDev && db) iniciarConsolaDev(db);
+} catch (e) {
+    console.log("Nota: Módulos de DB/NSFW no cargados o en modo liviano.");
+}
 
 const app = express();
 
-// 2. Middlewares esenciales
-app.use(cors()); // Permite peticiones desde Live Server (:5500)
-app.use(express.json({ limit: '10mb' })); // Para recibir JSON e imágenes en base64
+app.use(cors());
+app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
+
+// Servir la carpeta estática (Ajusta la ruta según dónde esté tu carpeta 'public')
+const PUBLIC_DIR = path.join(process.cwd(), 'public');
+app.use(express.static(PUBLIC_DIR));
 
 const server = http.createServer(app);
 const io = new Server(server, { 
@@ -20,31 +33,26 @@ const io = new Server(server, {
     } 
 });
 
-// Conexión a Base de Datos
-const db = require('./dbConnection'); 
-
-// Iniciar consola interactiva en terminal
-iniciarConsolaDev(db);
-
 // --- RUTAS API ---
-
-// Ejemplo de Endpoint de Login para eliminar el error 404 de /api/login
 app.post('/api/login', async (req, res) => {
     try {
         const { username, password } = req.body;
-        // Agrega aquí tu validación con DB
+        // Validación simulada / DB
         res.json({ status: 'ok', mensaje: 'Sesión iniciada' });
     } catch (error) {
         res.status(500).json({ error: error.message });
     }
 });
 
+// Fallback para servir el index.html en cualquier otra ruta
+app.get('*', (req, res) => {
+    res.sendFile(path.join(PUBLIC_DIR, 'index.html'));
+});
+
 // --- SOCKET.IO ---
-
 io.on('connection', (socket) => {
-
-    // Verificación automática de baneo al conectarse
     socket.on('autenticar', async ({ hwid }) => {
+        if (!db) return;
         try {
             const [sanciones] = await db.query(
                 'SELECT expira_en FROM sanciones_hwid WHERE hwid = ? AND expira_en > NOW()', 
@@ -63,16 +71,15 @@ io.on('connection', (socket) => {
         }
     });
 
-    // Procesamiento de mensajes e imágenes NSFW
     socket.on('enviar_mensaje', async (datos) => {
         console.log("📥 Mensaje recibido del cliente:", datos);
         const { usuario_id, grupo_id, hwid, es_imagen, contenido_imagen } = datos;
 
-        if (es_imagen) {
+        if (es_imagen && detectarContenidoNSFW && db) {
             const esNSFW = await detectarContenidoNSFW(contenido_imagen);
 
             if (esNSFW) {
-                const expiraEn = new Date(Date.now() + 60 * 60 * 1000); // 1 hora baneo
+                const expiraEn = new Date(Date.now() + 60 * 60 * 1000);
 
                 await db.query(
                     'INSERT INTO sanciones_hwid (hwid, razon, expira_en) VALUES (?, "Contenido sensible", ?) ON DUPLICATE KEY UPDATE expira_en = ?',
@@ -92,6 +99,12 @@ io.on('connection', (socket) => {
         }
 
         io.to(grupo_id).emit('nuevo_mensaje', datos);
+    });
+});
+
+// Usar la variable de entorno PORT obligatoria para Render
+const PORT = process.env.PORT || 3000;
+server.listen(PORT, () => console.log(`Servidor Komorebi corriendo en puerto ${PORT}`));
     });
 });
 
