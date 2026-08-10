@@ -8,16 +8,25 @@ const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
 
 const app = express();
+
+// Rutas ajustadas para la carpeta client/komorebi.database/
 const PUBLIC_DIR = path.join(__dirname, '../../public');
+const DB_FILE = path.join(__dirname, 'komorebi_backend_db.json');
 const PORT = process.env.PORT || 3000;
 
+// Permite orígenes locales y el dominio de Render
 function esOrigenPermitido(origin) {
     if (!origin) return true;
 
     try {
         const { protocol, hostname } = new URL(origin);
         if (protocol !== 'http:' && protocol !== 'https:') return false;
-        return hostname === 'localhost' || hostname === '127.0.0.1' || hostname.endsWith('.localhost');
+        return (
+            hostname === 'localhost' ||
+            hostname === '127.0.0.1' ||
+            hostname.endsWith('.localhost') ||
+            hostname.endsWith('.onrender.com')
+        );
     } catch {
         return false;
     }
@@ -51,8 +60,6 @@ const io = new Server(server, {
         methods: ['GET', 'POST']
     }
 });
-
-const DB_FILE = path.join(__dirname, 'komorebi_backend_db.json');
 
 function defaultDB() {
     return { usuarios: {}, amigos: {}, grupos: [], chatsPrivados: {}, sessions: {}, statuses: [] };
@@ -220,6 +227,8 @@ function renombrarUsuarioEnDB(db, oldName, newName) {
         if (sesion.username === oldName) sesion.username = newName;
     });
 }
+
+// --- RUTAS API ---
 
 app.post('/api/login', async (req, res) => {
     try {
@@ -487,6 +496,8 @@ app.get('/api/grupos/:grupoId/mensajes', requireAuth, (req, res) => {
     res.json({ success: true, messages: grupo.messages || [] });
 });
 
+// --- SOCKET.IO ---
+
 io.use((socket, next) => {
     const token = socket.handshake.auth?.token;
     const db = cargarDB();
@@ -546,6 +557,7 @@ io.on('connection', (socket) => {
     });
 });
 
+// Sirve index.html para cualquier ruta GET que no pertenezca a la API
 app.use((req, res, next) => {
     if (req.method === 'GET' && !req.path.startsWith('/api') && !req.path.startsWith('/socket.io')) {
         return res.sendFile(path.join(PUBLIC_DIR, 'index.html'));
@@ -555,7 +567,7 @@ app.use((req, res, next) => {
 
 if (require.main === module) {
     server.listen(PORT, () => {
-        console.log(`Servidor Komorebi corriendo en http://localhost:${PORT}`);
+        console.log(`Servidor Komorebi corriendo en el puerto ${PORT}`);
     });
 }
 
