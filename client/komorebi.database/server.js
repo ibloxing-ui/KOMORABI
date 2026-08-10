@@ -10,7 +10,9 @@ const bcrypt = require('bcryptjs');
 const app = express();
 
 // Rutas ajustadas para la carpeta client/komorebi.database/
-const PUBLIC_DIR = path.join(__dirname, '../../public');
+const PUBLIC_DIR = fs.existsSync(path.join(process.cwd(), 'public'))
+    ? path.join(process.cwd(), 'public')
+    : path.resolve(__dirname, '../../public');
 const DB_FILE = path.join(__dirname, 'komorebi_backend_db.json');
 const PORT = process.env.PORT || 3000;
 
