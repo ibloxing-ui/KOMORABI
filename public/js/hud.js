@@ -611,8 +611,7 @@ const HUD = {
         `;
     },
 
-    abrirModalPersonalizacion() {
-        const p = this.currentProfile || {};
+abrirModalPersonalizacion() {
         document.getElementById('modal-container').innerHTML = `
             <div class="modal-overlay">
                 <div class="modal-box modal-wide">
@@ -622,24 +621,12 @@ const HUD = {
                         <input type="text" id="input-nuevo-nombre" value="${escapeHtml(this.currentUser)}" placeholder="Nuevo nombre...">
                     </div>
                     <div class="form-group">
-                        <label>foto de perfil</label>
-                        <input type="file" id="input-photo" accept="image/*">
+                        <label>banner</label>
+                        <input type="file" id="input-banner" accept="image/*">
                     </div>
                     <div class="form-group">
-                        <label>banner (URL)</label>
-                        <input type="url" id="input-banner" value="${escapeHtml(p.banner || '')}" placeholder="https://...">
-                    </div>
-                    <div class="form-group">
-                        <label>color de fondo</label>
-                        <input type="text" id="input-bgcolor" value="${escapeHtml(p.bgColor || '#1e1e1e')}" placeholder="#1e1e1e">
-                    </div>
-                    <div class="form-group">
-                        <label>imagen de fondo (URL)</label>
-                        <input type="url" id="input-bgimage" value="${escapeHtml(p.bgImage || '')}" placeholder="https://...">
-                    </div>
-                    <div class="form-group">
-                        <label>fuente</label>
-                        <input type="text" id="input-font" value="${escapeHtml(p.fontFamily || 'sans-serif')}" placeholder="sans-serif">
+                        <label>imagen de fondo</label>
+                        <input type="file" id="input-bgimage" accept="image/*">
                     </div>
                     <div class="modal-buttons">
                         <button class="hud-btn btn-cancelar" onclick="HUD.cerrarModal()">cancelar</button>
@@ -651,21 +638,40 @@ const HUD = {
     },
 
     guardarPersonalizacion() {
-        const nuevoNombre = document.getElementById('input-nuevo-nombre').value.trim();
-        const photoInput = document.getElementById('input-photo');
-        const photo = photoInput && photoInput.files && photoInput.files[0] ? photoInput.files[0] : '';
-        const banner = document.getElementById('input-banner').value.trim();
-        const bgColor = document.getElementById('input-bgcolor').value.trim();
-        const bgImage = document.getElementById('input-bgimage').value.trim();
-        const fontFamily = document.getElementById('input-font').value.trim();
+        const nuevoNombre = document.getElementById('input-nuevo-nombre')?.value.trim();
+        const bannerInput = document.getElementById('input-banner');
+        const bgImageInput = document.getElementById('input-bgimage');
+
+        const bannerFile = bannerInput && bannerInput.files && bannerInput.files[0] ? bannerInput.files[0] : null;
+        const bgImageFile = bgImageInput && bgImageInput.files && bgImageInput.files[0] ? bgImageInput.files[0] : null;
 
         if (!nuevoNombre) return alert('El nombre no puede estar vacío.');
 
-        const enviarPerfil = (photoValue) => {
+        const readFileAsDataUrl = (file) => {
+            return new Promise((resolve) => {
+                if (!file) return resolve(null);
+                const reader = new FileReader();
+                reader.onload = () => resolve(reader.result);
+                reader.onerror = () => resolve(null);
+                reader.readAsDataURL(file);
+            });
+        };
+
+        Promise.all([
+            readFileAsDataUrl(bannerFile),
+            readFileAsDataUrl(bgImageFile)
+        ]).then(([newBanner, newBgImage]) => {
+            const p = this.currentProfile || {};
+            const banner = newBanner !== null ? newBanner : (p.banner || '');
+            const bgImage = newBgImage !== null ? newBgImage : (p.bgImage || '');
+            const photo = p.photo || '';
+            const bgColor = p.bgColor || '#1e1e1e';
+            const fontFamily = p.fontFamily || 'sans-serif';
+
             const perfilPromise = fetchJson(`${SOCKET_URL}/api/actualizar-perfil`, {
                 method: 'POST',
                 headers: this.authHeaders(),
-                body: JSON.stringify({ photo: photoValue, banner, bgColor, bgImage, fontFamily })
+                body: JSON.stringify({ photo, banner, bgColor, bgImage, fontFamily })
             });
 
             const renamePromise = nuevoNombre !== this.currentUser
@@ -678,8 +684,8 @@ const HUD = {
 
             Promise.all([perfilPromise, renamePromise])
                 .then(([perfilData, renameData]) => {
-                    if (!perfilData.success) return alert(perfilData.error);
-                    if (!renameData.success) return alert(renameData.error);
+                    if (!perfilData.success) return alert(perfilData.error || 'Error al actualizar perfil.');
+                    if (!renameData.success) return alert(renameData.error || 'Error al renombrar.');
 
                     if (renameData.username) {
                         this.currentUser = renameData.username;
@@ -691,7 +697,8 @@ const HUD = {
                     alert('Perfil actualizado correctamente.');
                 })
                 .catch(() => alert('Error al guardar el perfil.'));
-        };
+        });
+    },
 
         if (photo instanceof File) {
             const fileReader = new FileReader();
