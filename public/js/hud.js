@@ -1,11 +1,9 @@
 function getBackendUrl() {
     if (window.KOMOREBI_API) return window.KOMOREBI_API;
-    
     const hostname = window.location.hostname;
     if (hostname === 'localhost' || hostname === '127.0.0.1') {
-    return `https://komorabi.onrender.com`;
+        return `https://komorabi.onrender.com`;
     }
-    
     return window.location.origin;
 }
 
@@ -32,7 +30,7 @@ function fetchJson(url, options = {}) {
 }
 
 function escapeHtml(str) {
-    return String(str)
+    return String(str || '')
         .replace(/&/g, '&amp;')
         .replace(/</g, '&lt;')
         .replace(/>/g, '&gt;')
@@ -41,9 +39,8 @@ function escapeHtml(str) {
 }
 
 function isSafeImageUrl(url) {
-    if (!url) return false;
-    if (typeof url !== 'string') return false;
-    if (url.startsWith('data:image/')) return true;
+    if (!url || typeof url !== 'string') return false;
+    if (url.startsWith('data:image/') || url.startsWith('blob:')) return true;
     try {
         const parsed = new URL(url);
         return parsed.protocol === 'http:' || parsed.protocol === 'https:';
@@ -53,15 +50,14 @@ function isSafeImageUrl(url) {
 }
 
 function getStatusMediaTag(media) {
-    if (!media) return '';
-    if (typeof media !== 'string') return '';
+    if (!media || typeof media !== 'string') return '';
     if (media.startsWith('data:video/')) {
-        return `<video controls autoplay loop muted style="width:100%;border-radius:12px;max-height:260px;background:#000;"> <source src="${escapeHtml(media)}"></video>`;
+        return `<video controls autoplay loop muted style="width:100%;border-radius:12px;max-height:260px;background:#000;"><source src="${escapeHtml(media)}"></video>`;
     }
     if (media.startsWith('data:audio/')) {
-        return `<audio controls style="width:100%;"> <source src="${escapeHtml(media)}"></audio>`;
+        return `<audio controls style="width:100%;"><source src="${escapeHtml(media)}"></audio>`;
     }
-    if (media.startsWith('data:image/')) {
+    if (media.startsWith('data:image/') || media.startsWith('http')) {
         return `<img src="${escapeHtml(media)}" alt="estado" style="width:100%;border-radius:12px;max-height:260px;object-fit:cover;">`;
     }
     return `<p class="empty-text">Archivo no compatible.</p>`;
@@ -85,6 +81,7 @@ const HUD = {
     contactProfiles: {},
     unreadByContact: {},
     activeContacts: {},
+    selectedChatMediaBase64: null,
     statusEditorState: {
         mode: 'static',
         backgroundColor: '#111827',
@@ -129,7 +126,7 @@ const HUD = {
                 }
             })
             .catch(() => {
-                alert('No se pudo conectar con el servidor. Asegúrate de que esté corriendo.');
+                alert('No se pudo conectar con el servidor.');
                 this.limpiarSesion();
                 this.renderAuth();
             });
@@ -152,10 +149,6 @@ const HUD = {
         this.socket = io(SOCKET_URL, { auth: { token: this.authToken } });
         this.initSockets();
         this.renderMain();
-
-        if (this.currentProfile?.isNew) {
-            setTimeout(() => this.abrirModalPersonalizacion(), 300);
-        }
     },
 
     initSockets() {
@@ -164,19 +157,22 @@ const HUD = {
         this.socket.off('grupo_creado');
         this.socket.off('usuario_conectado');
         this.socket.off('usuario_desconectado');
+        this.socket.off('amigo_actualizado');
 
         this.socket.on('nuevo_mensaje', (msg) => {
-            if (!msg?.user || msg.user === this.currentUser) return;
-            const isActiveChat = this.activeChat?.type === 'privado' && this.activeChat.id === msg.user;
+            if (!msg?.user) return;
+            const isActiveChat = this.activeChat?.type === 'privado' && (this.activeChat.id === msg.user || msg.user === this.currentUser);
             if (isActiveChat) {
                 const feed = document.getElementById('feed');
                 if (feed) this.appendChatMessage(feed, msg);
                 return;
             }
 
-            this.unreadByContact[msg.user] = (this.unreadByContact[msg.user] || 0) + 1;
-            if (this.currentTab === 'privado' && !this.activeChat) {
-                this.renderMain();
+            if (msg.user !== this.currentUser) {
+                this.unreadByContact[msg.user] = (this.unreadByContact[msg.user] || 0) + 1;
+                if (this.currentTab === 'privado' && !this.activeChat) {
+                    this.renderMain();
+                }
             }
         });
 
@@ -192,6 +188,21 @@ const HUD = {
                 this.gruposList.push(grupo);
             }
             if (this.currentTab === 'grupos') this.renderMain();
+        });
+
+        this.socket.on('amigo_actualizado', ({ user, amigo }) => {
+            if (this.currentUser === user || this.currentUser === amigo) {
+                fetchJson(`${SOCKET_URL}/api/session`, {
+                    method: 'POST',
+                    headers: this.authHeaders(),
+                    body: JSON.stringify({ token: this.authToken })
+                }).then((data) => {
+                    if (data.success) {
+                        this.amigosList = data.amigos || [];
+                        this.cargarPerfilesAmigos();
+                    }
+                }).catch(() => {});
+            }
         });
 
         this.socket.on('usuario_conectado', ({ username }) => {
@@ -213,23 +224,39 @@ const HUD = {
         const loading = feed.querySelector('.empty-text');
         if (loading) loading.remove();
 
+        const isMe = msg.user === this.currentUser;
+        const timeStr = msg.timestamp
+            ? new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+            : '';
+
         const div = document.createElement('div');
-        div.className = `chat-msg ${msg.user === this.currentUser ? 'chat-msg-mine' : 'chat-msg-theirs'}`;
+        div.style.display = 'flex';
+        div.style.justifyContent = isMe ? 'flex-end' : 'flex-start';
+        div.style.gap = '8px';
+        div.style.marginBottom = '12px';
 
-        const avatarMarkup = msg.user === this.currentUser
-            ? ''
-            : `<div class="chat-msg-avatar">${this.getAvatarMarkupForUsername(msg.user, 'small')}</div>`;
+        const avatarMarkup = !isMe ? `
+            <div style="width:36px;height:36px;border-radius:50%;overflow:hidden;flex-shrink:0;background:#2b2b2b;">
+                ${this.getAvatarMarkupForUsername(msg.user, 'small')}
+            </div>
+        ` : '';
 
-        const mediaMarkup = msg.media ? `<div class="chat-media-wrap">${msg.media.startsWith('data:image/') ? `<img src="${escapeHtml(msg.media)}" alt="adjunto" class="chat-media">` : `<div class="chat-media-placeholder">📎 adjunto</div>`}</div>` : '';
+        const mediaMarkup = msg.media ? `
+            <div style="margin-top:6px;border-radius:10px;overflow:hidden;max-width:280px;">
+                <img src="${escapeHtml(msg.media)}" alt="imagen" style="width:100%;height:auto;display:block;border-radius:8px;">
+            </div>
+        ` : '';
 
         div.innerHTML = `
             ${avatarMarkup}
-            <div class="chat-msg-body">
-                <div class="chat-msg-meta">${escapeHtml(msg.user)}</div>
+            <div style="background:${isMe ? '#d2e3fc' : '#ffffff'};color:#202124;padding:8px 14px;border-radius:14px;max-width:70%;box-shadow:0 1px 3px rgba(0,0,0,0.08);">
+                <div style="font-size:0.75rem;font-weight:bold;color:${isMe ? '#1a73e8' : '#5f6368'};margin-bottom:2px;">${escapeHtml(msg.user)}</div>
+                ${msg.text ? `<div style="font-size:0.95rem;word-break:break-word;">${escapeHtml(msg.text)}</div>` : ''}
                 ${mediaMarkup}
-                ${msg.text ? `<div class="chat-msg-text">${escapeHtml(msg.text)}</div>` : ''}
+                <div style="font-size:0.65rem;text-align:right;color:#70757a;margin-top:4px;">${timeStr}</div>
             </div>
         `;
+
         feed.appendChild(div);
         feed.scrollTop = feed.scrollHeight;
     },
@@ -278,7 +305,7 @@ const HUD = {
                 })
                 .catch(() => {})
         )).then(() => {
-            if (this.currentTab === 'privado' && !this.activeChat) {
+            if (this.currentTab === 'privado') {
                 this.renderMain();
             }
         });
@@ -346,15 +373,8 @@ const HUD = {
                 body.photo = fileReader.result;
                 this.enviarAuth(body);
             };
-            fileReader.onerror = () => {
-                alert('No se pudo leer la imagen seleccionada.');
-            };
+            fileReader.onerror = () => alert('No se pudo leer la imagen.');
             fileReader.readAsDataURL(body.photo);
-            return;
-        }
-
-        if (this.isRegistering && typeof body.photo === 'string' && body.photo.startsWith('data:image/')) {
-            this.enviarAuth(body);
             return;
         }
 
@@ -375,9 +395,7 @@ const HUD = {
                     alert(data.error || 'No se pudo iniciar sesión.');
                 }
             })
-            .catch(() => {
-                alert('No se pudo conectar con el servidor backend.');
-            });
+            .catch(() => alert('No se pudo conectar con el servidor.'));
     },
 
     renderMain() {
@@ -398,12 +416,12 @@ const HUD = {
         return `
             <nav class="top-nav">
                 ${this.activeChat ? `
-                    <div class="chat-top-bar">
+                    <div class="chat-top-bar" style="display:flex;align-items:center;gap:10px;">
                         <div class="chat-top-user">
                             ${this.activeChat.type === 'privado'
                                 ? this.getAvatarMarkupForUsername(this.activeChat.id, 'small')
                                 : '<div class="avatar-shell avatar-small inactive-ring"><span class="avatar-fallback">👥</span></div>'}
-                            <span class="chat-top-title">${escapeHtml(this.activeChat.type === 'privado' ? this.activeChat.id : (this.gruposList.find((g) => g.id === this.activeChat.id)?.name || 'Grupo'))}</span>
+                            <span class="chat-top-title" style="font-weight:bold;">${escapeHtml(this.activeChat.type === 'privado' ? this.activeChat.id : (this.gruposList.find((g) => g.id === this.activeChat.id)?.name || 'Grupo'))}</span>
                         </div>
                     </div>
                 ` : `
@@ -455,8 +473,8 @@ const HUD = {
                                value="${escapeHtml(this.filtroAmigos)}" oninput="HUD.filtrarAmigos(this.value)">
                     </div>
                 </aside>
-                <div class="chat-main">
-                    <div class="chat-feed"></div>
+                <div class="chat-main" style="display:flex;align-items:center;justify-content:center;">
+                    <p class="empty-text">Selecciona un contacto a la izquierda para chatear.</p>
                 </div>
             </section>
         `;
@@ -484,19 +502,6 @@ const HUD = {
     },
 
     gruposViewComponent() {
-        if (this.gruposList.length === 0) {
-            return `
-                <section class="view view-enter welcome-groups-view">
-                    <div class="welcome-container">
-                        <h1 class="welcome-title">CREA UN GRUPO HOY</h1>
-                        <div class="welcome-buttons single-btn-center">
-                            <button class="hud-btn action-card-btn" onclick="HUD.abrirModalCrearGrupo()">CREAR</button>
-                        </div>
-                    </div>
-                </section>
-            `;
-        }
-
         return `
             <section class="view view-enter chat-layout">
                 <div class="sidebar-grupos">
@@ -513,53 +518,131 @@ const HUD = {
                     <div class="grupo-icon hud-btn" onclick="HUD.abrirModalCrearGrupo()" title="Crear grupo">+</div>
                 </div>
                 <div class="chat-main-welcome">
-                    <p class="empty-text">Selecciona un grupo a la izquierda para chatear.</p>
+                    <p class="empty-text">Selecciona un grupo para chatear o crea uno nuevo.</p>
                 </div>
             </section>
         `;
     },
 
+    renderPerfilLateralChat() {
+        if (!this.activeChat || this.activeChat.type !== 'privado') {
+            return `<div class="sidebar-grupos"></div>`;
+        }
+
+        const partnerName = this.activeChat.id;
+        const profile = this.contactProfiles?.[partnerName] || {};
+        const isActive = Boolean(this.activeContacts?.[partnerName]);
+
+        return `
+            <aside class="sidebar-grupos" style="width:260px;min-width:260px;background:#f3f4f6;border-right:1px solid #e5e7eb;padding:16px 12px;display:flex;flex-direction:column;align-items:center;text-align:center;">
+                <div style="width:100%;height:90px;border-radius:12px;background:#cbd5e1;background-size:cover;background-position:center;${profile.banner ? `background-image:url('${escapeHtml(profile.banner)}');` : ''}margin-bottom:-45px;"></div>
+                
+                <div style="width:76px;height:76px;border-radius:50%;border:3px solid #fff;overflow:hidden;background:#1f2937;z-index:2;box-shadow:0 2px 6px rgba(0,0,0,0.15);">
+                    ${isSafeImageUrl(profile.photo)
+                        ? `<img src="${escapeHtml(profile.photo)}" alt="${escapeHtml(partnerName)}" style="width:100%;height:100%;object-fit:cover;">`
+                        : '<span style="font-size:2rem;line-height:70px;color:#fff;">👤</span>'}
+                </div>
+
+                <h3 style="margin:10px 0 2px 0;font-size:1.15rem;color:#111827;">${escapeHtml(partnerName)}</h3>
+                <p style="margin:0;font-size:0.8rem;color:#6b7280;word-break:break-all;">${escapeHtml(profile.email || '')}</p>
+                
+                <div style="margin-top:16px;width:100%;text-align:left;font-size:0.85rem;color:#374151;border-top:1px solid #e5e7eb;padding-top:12px;display:grid;gap:6px;">
+                    <div><strong>Estado:</strong> <span style="color:${isActive ? '#10b981' : '#9ca3af'};font-weight:bold;">${isActive ? 'En línea' : 'Desconectado'}</span></div>
+                </div>
+
+                <button class="hud-btn" style="margin-top:auto;width:100%;background:#e5e7eb;color:#1f2937;border:none;padding:8px;border-radius:8px;font-size:0.85rem;" onclick="HUD.abrirPerfil('${escapeHtml(partnerName)}')">
+                    Ver perfil completo
+                </button>
+            </aside>
+        `;
+    },
+
     chatViewComponent() {
-        let title = '';
         if (this.activeChat.type === 'privado') {
-            title = this.activeChat.id;
             const chatKey = [this.currentUser, this.activeChat.id].sort().join('_');
             if (this.socket) this.socket.emit('unir_chat', chatKey);
-        } else {
-            const grupo = this.gruposList.find((g) => g.id === this.activeChat.id);
-            title = grupo ? grupo.name : 'Grupo';
         }
 
         return `
-            <section class="view view-enter chat-layout">
-                <div class="sidebar-grupos"></div>
-                <div class="chat-main">
-                    <div class="chat-top-bar">
-                        <div class="chat-top-user">
-                            ${this.activeChat.type === 'privado'
-                                ? this.getAvatarMarkupForUsername(this.activeChat.id, 'small')
-                                : '<div class="avatar-shell avatar-small inactive-ring"><span class="avatar-fallback">👥</span></div>'}
-                            <span class="chat-top-title">${escapeHtml(title)}</span>
-                        </div>
-                    </div>
-                    <div id="feed" class="chat-feed">
+            <section class="view view-enter chat-layout" style="height:100%;">
+                ${this.renderPerfilLateralChat()}
+                
+                <div class="chat-main" style="display:flex;flex-direction:column;height:100%;flex:1;padding:16px;">
+                    <div id="feed" class="chat-feed" style="flex:1;overflow-y:auto;padding-right:8px;">
                         <p class="empty-text" style="text-align:center;margin-top:10px;">Cargando mensajes...</p>
                     </div>
-                    <footer class="chat-input-area">
-    <div class="message-input-wrap">
-        <label for="msg-image" class="chat-voice-btn" style="cursor:pointer;" title="Adjuntar imagen">📷</label>
-        <!-- El ID 'msg-image' es crítico para evitar el error de referencia nula -->
-        <input type="file" id="msg-image" accept="image/*" style="display:none;" onchange="HUD.handleMediaSelection(event)">
-        <input type="text" id="msg-input" placeholder="Escribe para enviar un mensaje..." onkeypress="HUD.handleKeyPress(event)">
-        <button class="chat-voice-btn" onclick="HUD.enviarNotaVoz()" type="button" aria-label="Enviar nota de voz">
-            🎤
-        </button>
-    </div>
-</footer>
-                    <button class="hud-btn btn-cancelar chat-exit-btn" onclick="HUD.cerrarChat()">Exit chat</button>
+
+                    <footer class="chat-input-area" style="margin-top:12px;">
+                        <div class="message-input-wrap" style="background:#e5e7eb;border-radius:24px;padding:6px 14px;display:flex;align-items:center;gap:8px;">
+                            <label for="msg-image" style="cursor:pointer;font-size:1.2rem;margin:0;display:flex;align-items:center;" title="Adjuntar imagen">📷</label>
+                            <input type="file" id="msg-image" accept="image/*" style="display:none;" onchange="HUD.handleMediaSelection(event)">
+
+                            <div id="chat-preview-box" style="display:none;align-items:center;gap:4px;background:#d1d5db;padding:2px 8px;border-radius:12px;">
+                                <img id="chat-preview-thumb" src="" style="width:24px;height:24px;border-radius:4px;object-fit:cover;">
+                                <span onclick="HUD.clearSelectedMedia()" style="cursor:pointer;font-size:0.75rem;font-weight:bold;color:#4b5563;">✕</span>
+                            </div>
+
+                            <input type="text" id="msg-input" placeholder="Escribe para enviar un mensaje..." onkeypress="HUD.handleKeyPress(event)" style="flex:1;border:none;background:transparent;outline:none;font-size:0.95rem;color:#111827;">
+                            
+                            <button class="chat-voice-btn" onclick="HUD.sendCurrentMessage()" type="button" style="background:#111827;color:#fff;border:none;border-radius:50%;width:32px;height:32px;cursor:pointer;display:flex;align-items:center;justify-content:center;" title="Enviar">
+                                ➤
+                            </button>
+                        </div>
+                    </footer>
+                    <button class="hud-btn btn-cancelar chat-exit-btn" style="margin-top:8px;" onclick="HUD.cerrarChat()">Exit chat</button>
                 </div>
             </section>
         `;
+    },
+
+    handleMediaSelection(event) {
+        const file = event.target.files?.[0];
+        if (!file) return;
+
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            this.selectedChatMediaBase64 = e.target.result;
+            const previewBox = document.getElementById('chat-preview-box');
+            const previewThumb = document.getElementById('chat-preview-thumb');
+            if (previewBox && previewThumb) {
+                previewThumb.src = this.selectedChatMediaBase64;
+                previewBox.style.display = 'flex';
+            }
+        };
+        reader.readAsDataURL(file);
+    },
+
+    clearSelectedMedia() {
+        this.selectedChatMediaBase64 = null;
+        const fileInput = document.getElementById('msg-image');
+        const previewBox = document.getElementById('chat-preview-box');
+        if (fileInput) fileInput.value = '';
+        if (previewBox) previewBox.style.display = 'none';
+    },
+
+    sendCurrentMessage() {
+        const input = document.getElementById('msg-input');
+        const text = input?.value.trim() || '';
+        const media = this.selectedChatMediaBase64 || '';
+
+        if (!text && !media) return;
+
+        if (input) input.value = '';
+        this.clearSelectedMedia();
+
+        const msgPayload = {
+            user: this.currentUser,
+            text,
+            media,
+            timestamp: Date.now()
+        };
+
+        if (this.activeChat.type === 'privado') {
+            const chatKey = [this.currentUser, this.activeChat.id].sort().join('_');
+            this.socket.emit('enviar_mensaje_privado', { chatKey, message: msgPayload });
+        } else {
+            this.socket.emit('enviar_mensaje_grupo', { grupoId: this.activeChat.id, message: msgPayload });
+        }
     },
 
     loadChatHistory() {
@@ -611,7 +694,7 @@ const HUD = {
         `;
     },
 
-abrirModalPersonalizacion() {
+    abrirModalPersonalizacion() {
         document.getElementById('modal-container').innerHTML = `
             <div class="modal-overlay">
                 <div class="modal-box modal-wide">
@@ -621,11 +704,11 @@ abrirModalPersonalizacion() {
                         <input type="text" id="input-nuevo-nombre" value="${escapeHtml(this.currentUser)}" placeholder="Nuevo nombre...">
                     </div>
                     <div class="form-group">
-                        <label>banner</label>
+                        <label>banner (archivo de imagen)</label>
                         <input type="file" id="input-banner" accept="image/*">
                     </div>
                     <div class="form-group">
-                        <label>imagen de fondo</label>
+                        <label>imagen de fondo (archivo de imagen)</label>
                         <input type="file" id="input-bgimage" accept="image/*">
                     </div>
                     <div class="modal-buttons">
@@ -795,7 +878,7 @@ abrirModalPersonalizacion() {
         const emoji = document.getElementById('status-emoji').value.trim();
 
         if (!mediaFile) {
-            alert('Selecciona un archivo de imagen, video o audio para publicar el estado.');
+            alert('Selecciona un archivo para publicar el estado.');
             return;
         }
 
@@ -807,17 +890,13 @@ abrirModalPersonalizacion() {
                 body: JSON.stringify({ media: reader.result, text, emoji, visibility: 'public' })
             })
                 .then((data) => {
-                    if (!data.success) {
-                        alert(data.error || 'No se pudo publicar el estado.');
-                        return;
-                    }
+                    if (!data.success) return alert(data.error || 'No se pudo publicar el estado.');
                     if (this.profileView?.profile?.username) {
                         this.abrirPerfil(this.profileView.profile.username);
                     }
                 })
                 .catch(() => alert('No se pudo publicar el estado.'));
         };
-        reader.onerror = () => alert('No se pudo leer el archivo seleccionado.');
         reader.readAsDataURL(mediaFile);
     },
 
@@ -901,7 +980,6 @@ abrirModalPersonalizacion() {
                                 <button class="hud-btn btn-cancelar" onclick="HUD.eliminarCapaSeleccionada()">borrar selección</button>
                                 <button class="hud-btn btn-crear" onclick="HUD.guardarEstadoDesdeModal()">publicar estado</button>
                             </div>
-                            <p class="empty-text">Arrastra las tarjetas hacia la vista previa para colocarlas. Usa el icono de movimiento o rotación para ajustar cada elemento.</p>
                         </div>
                     </div>
                 </div>
@@ -1010,9 +1088,7 @@ abrirModalPersonalizacion() {
             reader.readAsDataURL(file);
         });
 
-        canvas.addEventListener('dragover', (event) => {
-            event.preventDefault();
-        });
+        canvas.addEventListener('dragover', (event) => event.preventDefault());
 
         canvas.addEventListener('drop', (event) => {
             event.preventDefault();
@@ -1020,14 +1096,9 @@ abrirModalPersonalizacion() {
             const rect = canvas.getBoundingClientRect();
             const x = ((event.clientX - rect.left) / rect.width) * canvas.width;
             const y = ((event.clientY - rect.top) / rect.height) * canvas.height;
-            if (tool === 'text') {
-                this.agregarTextoEstado('', x, y);
-            } else if (tool === 'emoji') {
-                this.agregarEmojiEstado('', x, y);
-            } else if (tool === 'image') {
-                const input = document.getElementById('status-image-file');
-                if (input) input.click();
-            }
+            if (tool === 'text') this.agregarTextoEstado('', x, y);
+            else if (tool === 'emoji') this.agregarEmojiEstado('', x, y);
+            else if (tool === 'image') document.getElementById('status-image-file')?.click();
         });
 
         canvas.addEventListener('pointerdown', (event) => {
@@ -1100,18 +1171,12 @@ abrirModalPersonalizacion() {
         return this.statusEditorState.layers.find((layer) => layer.id === this.statusEditorState.selectedLayerId) || null;
     },
 
-    estaEnHandleMover(layer, x, y) {
-        const distance = Math.hypot(x - layer.x, y - layer.y);
-        return distance <= 20;
+    estaEnHandleRotacion(layer, x, y) {
+        const handleDistance = Math.max(layer.width || 140, layer.height || 80) / 2 + 40;
+        const handleX = layer.x + Math.cos((layer.rotation - 90) * Math.PI / 180) * handleDistance;
+        const handleY = layer.y + Math.sin((layer.rotation - 90) * Math.PI / 180) * handleDistance;
+        return Math.hypot(x - handleX, y - handleY) <= 18;
     },
-
- estaEnHandleRotacion(layer, x, y) {
-    const handleDistance = Math.max(layer.width || 140, layer.height || 80) / 2 + 40;
-    const handleX = layer.x + Math.cos((layer.rotation - 90) * Math.PI / 180) * handleDistance;
-    const handleY = layer.y + Math.sin((layer.rotation - 90) * Math.PI / 180) * handleDistance;
-    // Retornamos el cálculo de hitbox del handle de rotación
-    return Math.hypot(x - handleX, y - handleY) <= 18;
-},
 
     puntoDentroDeCapa(layer, x, y) {
         const halfW = (layer.width || 140) / 2;
@@ -1128,10 +1193,7 @@ abrirModalPersonalizacion() {
     agregarTextoEstado(text = '', x = null, y = null) {
         const input = document.getElementById('status-text-editor');
         const textValue = text || input?.value.trim();
-        if (!textValue) {
-            alert('Escribe un mensaje para añadirlo al estado.');
-            return;
-        }
+        if (!textValue) return alert('Escribe un mensaje.');
         const state = this.statusEditorState;
         const layer = {
             id: `text-${Date.now()}`,
@@ -1156,10 +1218,7 @@ abrirModalPersonalizacion() {
     agregarEmojiEstado(text = '', x = null, y = null) {
         const input = document.getElementById('status-emoji-editor');
         const textValue = text || input?.value.trim();
-        if (!textValue) {
-            alert('Añade un emoji o símbolo para el estado.');
-            return;
-        }
+        if (!textValue) return alert('Añade un emoji.');
         const state = this.statusEditorState;
         const layer = {
             id: `emoji-${Date.now()}`,
@@ -1211,10 +1270,10 @@ abrirModalPersonalizacion() {
         const rotationInput = document.getElementById('status-layer-rotation');
         const fontInput = document.getElementById('status-font-family');
         if (!selected) {
-            colorInput.disabled = true;
-            sizeInput.disabled = true;
-            fontInput.disabled = true;
-            rotationInput.disabled = true;
+            if (colorInput) colorInput.disabled = true;
+            if (sizeInput) sizeInput.disabled = true;
+            if (fontInput) fontInput.disabled = true;
+            if (rotationInput) rotationInput.disabled = true;
             return;
         }
         if (selected.type === 'text' || selected.type === 'emoji') {
@@ -1321,10 +1380,7 @@ abrirModalPersonalizacion() {
         const state = this.statusEditorState;
         const type = state.mode === 'creative' ? 'creative' : 'static';
         const backgroundColor = document.getElementById('status-bg-color')?.value || '#111827';
-        if (!state.layers.length) {
-            alert('Añade texto, emoji o una imagen antes de publicar el estado.');
-            return;
-        }
+        if (!state.layers.length) return alert('Añade contenido antes de publicar.');
 
         const renderAndSend = () => {
             const canvas = state.canvas;
@@ -1335,7 +1391,7 @@ abrirModalPersonalizacion() {
                 body: JSON.stringify({ media: imageData, text: '', emoji: '', backgroundColor, visibility: 'public', statusType: type })
             })
                 .then((data) => {
-                    if (!data.success) return alert(data.error || 'No se pudo publicar el estado.');
+                    if (!data.success) return alert(data.error || 'No se pudo publicar.');
                     this.cerrarModal();
                     this.abrirPerfil(this.currentUser);
                 })
@@ -1374,7 +1430,7 @@ abrirModalPersonalizacion() {
 
     guardarCorreo() {
         const nuevoCorreo = document.getElementById('input-correo').value.trim();
-        if (!nuevoCorreo || !nuevoCorreo.includes('@')) return alert('Ingresa un correo electrónico válido.');
+        if (!nuevoCorreo || !nuevoCorreo.includes('@')) return alert('Ingresa un correo válido.');
 
         fetchJson(`${SOCKET_URL}/api/actualizar-email`, {
             method: 'POST',
@@ -1384,7 +1440,7 @@ abrirModalPersonalizacion() {
             .then((data) => {
                 if (data.success) {
                     this.currentEmail = data.email;
-                    alert('Correo actualizado correctamente.');
+                    alert('Correo actualizado.');
                     this.cerrarModal();
                     this.renderMain();
                 } else {
@@ -1518,75 +1574,7 @@ abrirModalPersonalizacion() {
         this.renderMain();
     },
 
-    handleMediaSelection(event) {
-        const input = event.target;
-        if (!input.files?.[0]) return;
-        const preview = document.getElementById('msg-input');
-        if (preview) preview.placeholder = 'Imagen lista para enviar';
-    },
-
-    enviarNotaVoz() {
-        const input = document.getElementById('msg-input');
-        if (input) input.value = 'Voice note';
-        this.sendCurrentMessage();
-    },
-
-sendCurrentMessage() {
-    const input = document.getElementById('msg-input');
-    const fileInput = document.getElementById('msg-image');
-    const text = input?.value.trim() || '';
-    const mediaFile = fileInput?.files?.[0] || null;
-
-    if (!text && !mediaFile) return;
-
-    // 1. Limpiar el DOM inmediatamente para mejorar la percepción de velocidad
-    if (input) input.value = '';
-    if (fileInput) fileInput.value = '';
-
-    // 2. Optimistic Update: Renderizar en la UI local al instante
-    const feed = document.getElementById('feed');
-    if (feed) {
-        const optimisticMsg = {
-            user: this.currentUser,
-            text: text || (mediaFile ? 'Cargando imagen...' : ''),
-            // Usamos un Object URL local, es instantáneo y no bloquea el hilo
-            media: mediaFile ? URL.createObjectURL(mediaFile) : '',
-            timestamp: Date.now()
-        };
-        this.appendChatMessage(feed, optimisticMsg);
-    }
-
-    // 3. Procesamiento y envío de red
-    const sendPayload = (mediaValue = '') => {
-        if (!this.activeChat) return;
-
-        const msgPayload = {
-            user: this.currentUser,
-            text: text || (mediaValue ? '📷 Imagen' : ''),
-            media: mediaValue, // Aquí viaja el Base64 hacia los demás
-            timestamp: Date.now()
-        };
-
-        if (this.activeChat.type === 'privado') {
-            const chatKey = [this.currentUser, this.activeChat.id].sort().join('_');
-            this.socket.emit('enviar_mensaje_privado', { chatKey, message: msgPayload });
-        } else {
-            this.socket.emit('enviar_mensaje_grupo', { grupoId: this.activeChat.id, message: msgPayload });
-        }
-    };
-
-    if (mediaFile) {
-        // Ejecutamos la lectura asíncrona del archivo sin retrasar la UI
-        const reader = new FileReader();
-        reader.onload = () => sendPayload(reader.result);
-        reader.onerror = () => alert('No se pudo procesar la imagen.');
-        reader.readAsDataURL(mediaFile);
-    } else {
-        sendPayload('');
-    }
-},
-
-abrirChatGrupo(grupoId) {
+    abrirChatGrupo(grupoId) {
         this.activeChat = { type: 'grupo', id: grupoId };
         this.renderMain();
     },
