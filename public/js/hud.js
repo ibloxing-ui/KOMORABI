@@ -1591,9 +1591,9 @@ sendCurrentMessage() {
     } else {
         sendPayload('');
     }
-}
+},
 
-    abrirChatGrupo(grupoId) {
+abrirChatGrupo(grupoId) {
         this.activeChat = { type: 'grupo', id: grupoId };
         this.renderMain();
     },
