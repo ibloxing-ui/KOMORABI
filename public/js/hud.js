@@ -1,9 +1,13 @@
 function getBackendUrl() {
     if (window.KOMOREBI_API) return window.KOMOREBI_API;
-    return 'https://komorabi.onrender.com';
-}
+    
+    const hostname = window.location.hostname;
+    if (hostname === 'localhost' || hostname === '127.0.0.1') {
+        return `http://${hostname}:3000`;
+    }
     
     return window.location.origin;
+}
 
 const SOCKET_URL = getBackendUrl();
 
