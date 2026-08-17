@@ -1,8 +1,13 @@
 function getBackendUrl() {
     if (window.KOMOREBI_API) return window.KOMOREBI_API;
-    const port = window.location.port;
-    if (port === '3000' || port === '') return window.location.origin;
-    return `http://${window.location.hostname}:3000`;
+    
+    const hostname = window.location.hostname;
+    // Detección explícita del entorno local
+    if (hostname === 'localhost' || hostname === '127.0.0.1') {
+        return `http://${hostname}:3000`;
+    }
+    
+    return window.location.origin;
 }
 
 const SOCKET_URL = getBackendUrl();
@@ -542,18 +547,16 @@ const HUD = {
                         <p class="empty-text" style="text-align:center;margin-top:10px;">Cargando mensajes...</p>
                     </div>
                     <footer class="chat-input-area">
-                        <div class="message-input-wrap">
-                            <input type="text" id="msg-input" placeholder="Escribe para enviar un mensaje..." onkeypress="HUD.handleKeyPress(event)">
-                            <button class="chat-voice-btn" onclick="HUD.enviarNotaVoz()" type="button" aria-label="Enviar nota de voz">
-                                <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-                                    <path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3Z"></path>
-                                    <path d="M5 11a7 7 0 0 0 14 0"></path>
-                                    <path d="M12 18v3"></path>
-                                    <path d="M8 21h8"></path>
-                                </svg>
-                            </button>
-                        </div>
-                    </footer>
+    <div class="message-input-wrap">
+        <label for="msg-image" class="chat-voice-btn" style="cursor:pointer;" title="Adjuntar imagen">📷</label>
+        <!-- El ID 'msg-image' es crítico para evitar el error de referencia nula -->
+        <input type="file" id="msg-image" accept="image/*" style="display:none;" onchange="HUD.handleMediaSelection(event)">
+        <input type="text" id="msg-input" placeholder="Escribe para enviar un mensaje..." onkeypress="HUD.handleKeyPress(event)">
+        <button class="chat-voice-btn" onclick="HUD.enviarNotaVoz()" type="button" aria-label="Enviar nota de voz">
+            🎤
+        </button>
+    </div>
+</footer>
                     <button class="hud-btn btn-cancelar chat-exit-btn" onclick="HUD.cerrarChat()">Exit chat</button>
                 </div>
             </section>
@@ -1104,24 +1107,18 @@ const HUD = {
         return this.statusEditorState.layers.find((layer) => layer.id === this.statusEditorState.selectedLayerId) || null;
     },
 
-    estaEnHandleRotacion(layer, x, y) {
-        const handleDistance = Math.max(layer.width || 140, layer.height || 80) / 2 + 34;
-        const handleX = layer.x + Math.cos((layer.rotation - 90) * Math.PI / 180) * handleDistance;
-        const handleY = layer.y + Math.sin((layer.rotation - 90) * Math.PI / 180) * handleDistance;
-        return Math.hypot(x - handleX, y - handleY) <= 18;
-    },
-
     estaEnHandleMover(layer, x, y) {
         const distance = Math.hypot(x - layer.x, y - layer.y);
         return distance <= 20;
     },
 
-    estaEnHandleRotacion(layer, x, y) {
-        const handleDistance = Math.max(layer.width || 140, layer.height || 80) / 2 + 40;
-        const handleX = layer.x + Math.cos((layer.rotation - 90) * Math.PI / 180) * handleDistance;
-        const handleY = layer.y + Math.sin((layer.rotation - 90) * Math.PI / 180) * handleDistance;
-        return Math.hypot(x - handleX, y - handleY) <= 18;
-    },
+ estaEnHandleRotacion(layer, x, y) {
+    const handleDistance = Math.max(layer.width || 140, layer.height || 80) / 2 + 40;
+    const handleX = layer.x + Math.cos((layer.rotation - 90) * Math.PI / 180) * handleDistance;
+    const handleY = layer.y + Math.sin((layer.rotation - 90) * Math.PI / 180) * handleDistance;
+    // Retornamos el cálculo de hitbox del handle de rotación
+    return Math.hypot(x - handleX, y - handleY) <= 18;
+},
 
     puntoDentroDeCapa(layer, x, y) {
         const halfW = (layer.width || 140) / 2;
@@ -1541,41 +1538,60 @@ const HUD = {
         this.sendCurrentMessage();
     },
 
-    sendCurrentMessage() {
-        const input = document.getElementById('msg-input');
-        const fileInput = document.getElementById('msg-image');
-        const text = input?.value.trim() || '';
-        const mediaFile = fileInput?.files?.[0] || null;
+sendCurrentMessage() {
+    const input = document.getElementById('msg-input');
+    const fileInput = document.getElementById('msg-image');
+    const text = input?.value.trim() || '';
+    const mediaFile = fileInput?.files?.[0] || null;
 
-        if (!text && !mediaFile) return;
+    if (!text && !mediaFile) return;
 
-        const sendPayload = (mediaValue = '') => {
-            if (!this.activeChat) return;
-            if (this.activeChat.type === 'privado') {
-                const chatKey = [this.currentUser, this.activeChat.id].sort().join('_');
-                this.socket.emit('enviar_mensaje_privado', { chatKey, message: { text: text || (mediaValue ? '📷 Imagen' : ''), media: mediaValue } });
-            } else {
-                this.socket.emit('enviar_mensaje_grupo', { grupoId: this.activeChat.id, message: { text: text || (mediaValue ? '📷 Imagen' : ''), media: mediaValue } });
-            }
-            if (input) input.value = '';
-            if (fileInput) fileInput.value = '';
-            const feed = document.getElementById('feed');
-            if (feed) {
-                const loading = feed.querySelector('.empty-text');
-                if (loading) loading.remove();
-            }
+    // 1. Limpiar el DOM inmediatamente para mejorar la percepción de velocidad
+    if (input) input.value = '';
+    if (fileInput) fileInput.value = '';
+
+    // 2. Optimistic Update: Renderizar en la UI local al instante
+    const feed = document.getElementById('feed');
+    if (feed) {
+        const optimisticMsg = {
+            user: this.currentUser,
+            text: text || (mediaFile ? 'Cargando imagen...' : ''),
+            // Usamos un Object URL local, es instantáneo y no bloquea el hilo
+            media: mediaFile ? URL.createObjectURL(mediaFile) : '',
+            timestamp: Date.now()
+        };
+        this.appendChatMessage(feed, optimisticMsg);
+    }
+
+    // 3. Procesamiento y envío de red
+    const sendPayload = (mediaValue = '') => {
+        if (!this.activeChat) return;
+
+        const msgPayload = {
+            user: this.currentUser,
+            text: text || (mediaValue ? '📷 Imagen' : ''),
+            media: mediaValue, // Aquí viaja el Base64 hacia los demás
+            timestamp: Date.now()
         };
 
-        if (mediaFile) {
-            const reader = new FileReader();
-            reader.onload = () => sendPayload(reader.result);
-            reader.onerror = () => alert('No se pudo leer la imagen adjunta.');
-            reader.readAsDataURL(mediaFile);
-            return;
+        if (this.activeChat.type === 'privado') {
+            const chatKey = [this.currentUser, this.activeChat.id].sort().join('_');
+            this.socket.emit('enviar_mensaje_privado', { chatKey, message: msgPayload });
+        } else {
+            this.socket.emit('enviar_mensaje_grupo', { grupoId: this.activeChat.id, message: msgPayload });
         }
+    };
 
+    if (mediaFile) {
+        // Ejecutamos la lectura asíncrona del archivo sin retrasar la UI
+        const reader = new FileReader();
+        reader.onload = () => sendPayload(reader.result);
+        reader.onerror = () => alert('No se pudo procesar la imagen.');
+        reader.readAsDataURL(mediaFile);
+    } else {
         sendPayload('');
-    },
+    }
+}
 
     abrirChatGrupo(grupoId) {
         this.activeChat = { type: 'grupo', id: grupoId };
