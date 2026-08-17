@@ -700,19 +700,6 @@ abrirModalPersonalizacion() {
         });
     },
 
-        if (photo instanceof File) {
-            const fileReader = new FileReader();
-            fileReader.onload = () => enviarPerfil(fileReader.result);
-            fileReader.onerror = () => {
-                alert('No se pudo leer la imagen seleccionada.');
-            };
-            fileReader.readAsDataURL(photo);
-            return;
-        }
-
-        enviarPerfil('');
-    },
-
     abrirPerfil(username) {
         if (!username) return;
         this.cerrarModal();
