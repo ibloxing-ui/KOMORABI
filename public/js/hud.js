@@ -557,42 +557,142 @@ const HUD = {
         `;
     },
 
-    chatViewComponent() {
-        if (this.activeChat.type === 'privado') {
-            const chatKey = [this.currentUser, this.activeChat.id].sort().join('_');
+chatViewComponent() {
+        const isPrivado = this.activeChat.type === 'privado';
+        const partnerName = isPrivado ? this.activeChat.id : (this.gruposList.find(g => g.id === this.activeChat.id)?.name || 'Grupo');
+        const profile = isPrivado ? (this.contactProfiles?.[partnerName] || {}) : {};
+        const isActive = Boolean(this.activeContacts?.[partnerName]);
+
+        if (isPrivado) {
+            const chatKey = [this.currentUser, partnerName].sort().join('_');
             if (this.socket) this.socket.emit('unir_chat', chatKey);
         }
 
         return `
-            <section class="view view-enter chat-layout" style="height:100%;">
-                ${this.renderPerfilLateralChat()}
-                
-                <div class="chat-main" style="display:flex;flex-direction:column;height:100%;flex:1;padding:16px;">
-                    <div id="feed" class="chat-feed" style="flex:1;overflow-y:auto;padding-right:8px;">
-                        <p class="empty-text" style="text-align:center;margin-top:10px;">Cargando mensajes...</p>
-                    </div>
+            <div class="chat-perspective-wrapper">
+                <div class="chat-layout-container" id="chatLayoutContainer">
+                    <!-- Sidebar con Perfil Lateral -->
+                    <aside class="chat-profile-sidebar">
+                        <div class="chat-profile__banner" style="${profile.banner ? `background-image:url('${escapeHtml(profile.banner)}');` : ''}"></div>
+                        <img class="chat-profile__avatar" 
+                             src="${escapeHtml(profile.photo || '')}" 
+                             onerror="this.src='https://api.dicebear.com/7.x/bottts/svg?seed=${encodeURIComponent(partnerName)}'" 
+                             alt="${escapeHtml(partnerName)}" />
+                        <h2 class="chat-profile__name">${escapeHtml(partnerName)}</h2>
+                        <p class="chat-profile__email">${escapeHtml(profile.email || '')}</p>
+                        <div class="chat-profile__divider"></div>
+                        <p class="chat-profile__status">
+                            Estado: <strong style="color: ${isActive ? '#10b981' : '#8a9099'}">${isActive ? 'En línea' : 'Desconectado'}</strong>
+                        </p>
+                        <button type="button" class="hud-btn btn-crear" style="width:85%;" onclick="HUD.abrirPerfil('${escapeHtml(partnerName)}')">
+                            Ver perfil completo
+                        </button>
+                    </aside>
 
-                    <footer class="chat-input-area" style="margin-top:12px;">
-                        <div class="message-input-wrap" style="background:#e5e7eb;border-radius:24px;padding:6px 14px;display:flex;align-items:center;gap:8px;">
-                            <label for="msg-image" style="cursor:pointer;font-size:1.2rem;margin:0;display:flex;align-items:center;" title="Adjuntar imagen">📷</label>
-                            <input type="file" id="msg-image" accept="image/*" style="display:none;" onchange="HUD.handleMediaSelection(event)">
+                    <!-- Columna Principal del Chat -->
+                    <main class="chat-main-column">
+                        <!-- Feed de Mensajes -->
+                        <section class="chat-messages-area" id="feed" aria-live="polite">
+                            <p class="empty-text" style="text-align:center;margin-top:10px;">Cargando mensajes...</p>
+                        </section>
 
-                            <div id="chat-preview-box" style="display:none;align-items:center;gap:4px;background:#d1d5db;padding:2px 8px;border-radius:12px;">
-                                <img id="chat-preview-thumb" src="" style="width:24px;height:24px;border-radius:4px;object-fit:cover;">
-                                <span onclick="HUD.clearSelectedMedia()" style="cursor:pointer;font-size:0.75rem;font-weight:bold;color:#4b5563;">✕</span>
+                        <!-- Barra Composer -->
+                        <form class="chat-composer" id="composerForm" onsubmit="event.preventDefault(); HUD.sendCurrentMessage();">
+                            <label for="chat-file-input" class="composer__btn-photo" title="Adjuntar foto">
+                                <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                                    <rect x="3" y="5" width="18" height="14" rx="2.5" />
+                                    <circle cx="12" cy="12" r="3.2" />
+                                    <path d="M8 5l1.2-2h5.6L16 5" />
+                                </svg>
+                            </label>
+                            <input type="file" id="chat-file-input" accept="image/*" style="display:none;" onchange="HUD.handleMediaSelection(event)">
+
+                            <div id="composerPreview" class="composer__preview">
+                                <img id="composerThumb" src="" alt="preview" />
+                                <span class="composer__preview-clear" onclick="HUD.clearSelectedMedia()">✕</span>
                             </div>
 
-                            <input type="text" id="msg-input" placeholder="Escribe para enviar un mensaje..." onkeypress="HUD.handleKeyPress(event)" style="flex:1;border:none;background:transparent;outline:none;font-size:0.95rem;color:#111827;">
+                            <input type="text" id="msg-input" class="composer__input-field" placeholder="Escribe para enviar un mensaje..." onkeypress="HUD.handleKeyPress(event)" />
                             
-                            <button class="chat-voice-btn" onclick="HUD.sendCurrentMessage()" type="button" style="background:#111827;color:#fff;border:none;border-radius:50%;width:32px;height:32px;cursor:pointer;display:flex;align-items:center;justify-content:center;" title="Enviar">
-                                ➤
+                            <button type="submit" class="composer__btn-send" aria-label="Enviar mensaje">
+                                <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                    <path d="M5 12h14" />
+                                    <path d="M13 6l6 6-6 6" />
+                                </svg>
                             </button>
+                        </form>
+
+                        <!-- Botón Exit Chat -->
+                        <div class="chat-footer-bar">
+                            <button type="button" class="btn--exit-chat" onclick="HUD.cerrarChatAnimado()">Exit chat</button>
                         </div>
-                    </footer>
-                    <button class="hud-btn btn-cancelar chat-exit-btn" style="margin-top:8px;" onclick="HUD.cerrarChat()">Exit chat</button>
+                    </main>
                 </div>
-            </section>
+            </div>
         `;
+    },
+
+    cerrarChatAnimado() {
+        const container = document.getElementById('chatLayoutContainer');
+        if (!container) {
+            this.cerrarChat();
+            return;
+        }
+        if (container.classList.contains('is-peeling')) return;
+
+        // Ejecuta la animación 3D de desprendimiento en todo el chat
+        container.classList.add('is-peeling');
+        container.addEventListener('animationend', () => {
+            this.cerrarChat();
+        }, { once: true });
+    },
+
+    appendChatMessage(feed, msg) {
+        const loading = feed.querySelector('.empty-text');
+        if (loading) loading.remove();
+
+        const isMe = msg.user === this.currentUser;
+        const now = msg.timestamp ? new Date(msg.timestamp) : new Date();
+        let h = now.getHours();
+        const m = String(now.getMinutes()).padStart(2, '0');
+        const ampm = h >= 12 ? 'PM' : 'AM';
+        h = h % 12 || 12;
+        const timeStr = `${String(h).padStart(2, '0')}:${m} ${ampm}`;
+
+        const article = document.createElement('article');
+        article.className = `msg-row ${isMe ? 'msg-me' : 'msg-other'}`;
+
+        const avatarSrc = isMe 
+            ? (this.currentProfile?.photo || '') 
+            : (this.contactProfiles?.[msg.user]?.photo || '');
+
+        const avatarHtml = !isMe ? `
+            <img class="msg-avatar" 
+                 src="${escapeHtml(avatarSrc)}" 
+                 onerror="this.src='https://api.dicebear.com/7.x/bottts/svg?seed=${encodeURIComponent(msg.user)}'" 
+                 alt="${escapeHtml(msg.user)}" />
+        ` : '';
+
+        const mediaHtml = msg.media ? `
+            <div class="msg-media">
+                <img src="${escapeHtml(msg.media)}" alt="adjunto" />
+            </div>
+        ` : '';
+
+        article.innerHTML = `
+            ${avatarHtml}
+            <div class="msg-content-wrap">
+                <div class="msg-bubble">
+                    <span class="msg-author">${escapeHtml(msg.user)}</span>
+                    ${msg.text ? `<p class="msg-text">${escapeHtml(msg.text)}</p>` : ''}
+                    ${mediaHtml}
+                </div>
+                <time class="msg-time">${timeStr}</time>
+            </div>
+        `;
+
+        feed.appendChild(article);
+        feed.scrollTop = feed.scrollHeight;
     },
 
     handleMediaSelection(event) {
@@ -602,11 +702,11 @@ const HUD = {
         const reader = new FileReader();
         reader.onload = (e) => {
             this.selectedChatMediaBase64 = e.target.result;
-            const previewBox = document.getElementById('chat-preview-box');
-            const previewThumb = document.getElementById('chat-preview-thumb');
-            if (previewBox && previewThumb) {
-                previewThumb.src = this.selectedChatMediaBase64;
-                previewBox.style.display = 'flex';
+            const preview = document.getElementById('composerPreview');
+            const thumb = document.getElementById('composerThumb');
+            if (preview && thumb) {
+                thumb.src = this.selectedChatMediaBase64;
+                preview.style.display = 'flex';
             }
         };
         reader.readAsDataURL(file);
@@ -614,10 +714,10 @@ const HUD = {
 
     clearSelectedMedia() {
         this.selectedChatMediaBase64 = null;
-        const fileInput = document.getElementById('msg-image');
-        const previewBox = document.getElementById('chat-preview-box');
+        const fileInput = document.getElementById('chat-file-input');
+        const preview = document.getElementById('composerPreview');
         if (fileInput) fileInput.value = '';
-        if (previewBox) previewBox.style.display = 'none';
+        if (preview) preview.style.display = 'none';
     },
 
     sendCurrentMessage() {

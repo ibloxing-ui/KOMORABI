@@ -320,19 +320,19 @@ app.post('/api/actualizar-perfil', requireAuth, (req, res) => {
         if (photo && !esFotoValida(photo)) {
             return res.json({ success: false, error: 'La foto debe ser un archivo de imagen o un enlace http(s) válido.' });
         }
-        user.photo = typeof photo === 'string' ? sanitizarTexto(photo, 1500000) || user.photo : user.photo;
+        user.photo = typeof photo === 'string' ? sanitizarTexto(photo, 200000) || user.photo : user.photo;
     }
     if (banner !== undefined) {
-        if (banner && !esFotoValida(banner)) {
-            return res.json({ success: false, error: 'El banner debe ser una imagen válida o un enlace http(s).' });
+        if (banner && !esUrlSegura(banner)) {
+            return res.json({ success: false, error: 'El banner debe ser un enlace http(s) válido.' });
         }
-        user.banner = typeof banner === 'string' ? sanitizarTexto(banner, 1500000) : '';
+        user.banner = sanitizarTexto(banner, 500);
     }
     if (bgImage !== undefined) {
-        if (bgImage && !esFotoValida(bgImage)) {
-            return res.json({ success: false, error: 'La imagen de fondo debe ser una imagen válida o un enlace http(s).' });
+        if (bgImage && !esUrlSegura(bgImage)) {
+            return res.json({ success: false, error: 'La imagen de fondo debe ser un enlace http(s) válido.' });
         }
-        user.bgImage = typeof bgImage === 'string' ? sanitizarTexto(bgImage, 1500000) : '';
+        user.bgImage = sanitizarTexto(bgImage, 500);
     }
     if (bgColor !== undefined) user.bgColor = sanitizarTexto(bgColor, 20) || '#1e1e1e';
     if (fontFamily !== undefined) user.fontFamily = sanitizarTexto(fontFamily, 50) || 'sans-serif';
@@ -391,6 +391,7 @@ app.post('/api/amigos', requireAuth, (req, res) => {
     if (!db.amigos[amigo].includes(user)) db.amigos[amigo].push(user);
 
     guardarDB(db);
+    io.emit('amigo_actualizado', { user, amigo });
     res.json({ success: true, amigos: db.amigos[user] });
 });
 
@@ -526,7 +527,7 @@ io.on('connection', (socket) => {
         if (!usuarioEnChatPrivado(chatKey, socket.username)) return;
 
         const db = cargarDB();
-        const media = typeof message?.media === 'string' ? sanitizarTexto(message.media, 1500000) : '';
+        const media = typeof message?.media === 'string' ? sanitizarTexto(message.media, 5000) : '';
         const mensajeSeguro = {
             user: socket.username,
             text: sanitizarTexto(message?.text, 2000),
